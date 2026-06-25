@@ -1,0 +1,122 @@
+# Auditor de cambios de infraestructura en Pull Requests
+
+> Documento de diseño · Proyecto de portafolio backend
+> Autor: Sebastián · Versión 1.0
+
+---
+
+## 1. El problema que resuelve
+
+Los equipos que trabajan con la nube definen su infraestructura con **código** (Infrastructure as Code): archivos de Terraform o Bicep que describen servidores, bases de datos, redes y permisos. Cada cambio a esa infraestructura pasa por un **Pull Request** en GitHub, igual que el código de aplicación.
+
+Revisar esos cambios a mano tiene dos riesgos graves y fáciles de pasar por alto:
+
+- **Seguridad:** una línea mal configurada puede dejar una base de datos accesible desde todo internet, abrir un puerto sensible o filtrar un secreto. El revisor humano, leyendo un diff entre muchos otros, a menudo no lo nota.
+- **Costo:** un cambio aparentemente inocente (cambiar un tipo de instancia, subir el número de réplicas) puede multiplicar la factura mensual de la nube. Nadie lo ve hasta que llega el cobro.
+
+**Qué resuelve este sistema:** un revisor automático que se dispara cuando se abre un PR que toca infraestructura, analiza el cambio en busca de riesgos de seguridad y estima su impacto en costo, y publica un comentario estructurado en el PR **antes** de que se apruebe. No es un chatbot: nadie conversa con él. Trabaja en segundo plano, disparado por un evento.
+
+**Alcance realista (MVP):** soportar Terraform primero (es el estándar de facto), un conjunto acotado de reglas de seguridad de alto impacto y una estimación de costo de orden de magnitud. Bicep y reglas avanzadas quedan como extensiones posteriores.
+
+---
+
+## 2. Arquitectura y justificación
+
+### Decisión: monolito modular con worker asíncrono y arquitectura hexagonal (puertos y adaptadores)
+
+No es microservicios, y la justificación es lo importante.
+
+**Por qué un worker asíncrono es obligatorio (no opcional).**
+GitHub espera que el endpoint del webhook responda en pocos segundos; si tarda más, considera la entrega fallida. Pero el análisis real —traer el diff, parsearlo, llamar al LLM— tarda mucho más que eso. Por lo tanto, **hay que separar la recepción del evento del procesamiento**:
+
+- La capa **web** recibe el webhook, lo valida, encola el trabajo y responde `2xx` de inmediato.
+- La capa **worker** consume la cola y hace el análisis pesado a su ritmo.
+
+Esto te obliga a aprender el patrón productor/consumidor con cola, que es el corazón de cualquier backend moderno orientado a eventos.
+
+**Por qué un monolito modular y no microservicios.**
+Hay un solo desarrollador, un solo dominio (auditar PRs de IaC) y ninguna necesidad real de escalar partes de forma independiente todavía. Adoptar microservicios aquí agregaría costos —tracing distribuido, fallos de red entre servicios, despliegues múltiples— sin ningún beneficio proporcional. Es sobre-ingeniería. El monolito modular te da separación de responsabilidades limpia y, si algún día hiciera falta, el worker ya está desacoplado y se podría extraer.
+
+**Por qué arquitectura hexagonal (puertos y adaptadores) dentro del monolito.**
+Este proyecto depende de tres servicios externos poco confiables: la **API de GitHub**, el **LLM** y el motor de **costo**. El principio rector es tratar al LLM como una dependencia externa que falla, tiene latencia variable y cuesta dinero. Ponerlos detrás de puertos (interfaces) con adaptadores concretos te permite:
+
+- Probar la lógica de negocio con *mocks*, sin llamar a servicios reales en cada test.
+- Cambiar de proveedor de LLM o de motor de costo sin tocar el núcleo.
+- Aislar la resiliencia (timeouts, reintentos, fallback) en el adaptador, no esparcida por todo el código.
+
+### Flujo de alto nivel
+
+```
+GitHub (PR abierto)
+      │  webhook (HTTP POST firmado)
+      ▼
+┌──────────────┐   verifica firma HMAC
+│  Capa Web    │   valida idempotencia
+│  (FastAPI)   │   encola job  ──────────►  [ Cola (Redis) ]
+└──────────────┘   responde 2xx rápido            │
+                                                   ▼
+                                          ┌──────────────────┐
+                                          │     Worker        │
+                                          │  1. trae el diff  │──► API GitHub
+                                          │  2. parsea IaC    │
+                                          │  3. reglas seg.   │
+                                          │  4. costo         │──► Infracost
+                                          │  5. explica (IA)  │──► LLM (adapter)
+                                          │  6. comenta PR    │──► API GitHub
+                                          └──────────────────┘
+                                                   │
+                                                   ▼
+                                          [ PostgreSQL: resultados + métricas ]
+```
+
+**Detalle clave de diseño:** la detección de riesgos es mayormente **determinista** (reglas sobre el árbol parseado del IaC). El LLM solo entra para *explicar* y *priorizar* los hallazgos en lenguaje claro. No le delegas al modelo lo que un parser hace mejor y de forma confiable. Esto es buen criterio de ingeniería y además abarata y estabiliza el sistema.
+
+---
+
+## 3. Stack tecnológico
+
+| Capa | Tecnología | Justificación |
+|------|------------|---------------|
+| Lenguaje / framework web | **Python + FastAPI** | Es tu fortaleza; async nativo encaja con I/O hacia GitHub y el LLM. *Nota: si quieres alinear con stacks tipo Node/TypeScript, Fastify es el equivalente directo; es un trade-off de afinidad con el empleador vs. profundidad actual.* |
+| Cola / broker | **Redis + arq** (o Celery) | Lo más simple para aprender productor/consumidor en local. Migrable a SQS si algún día se despliega en AWS. |
+| Worker | Proceso Python independiente | Consume la cola; se escala por separado de la web. |
+| Base de datos | **PostgreSQL** | Tu zona de confort; guarda registros de análisis, claves de idempotencia, resultados y métricas. |
+| Parseo de Terraform | **python-hcl2** | Convierte el HCL en estructuras que puedes inspeccionar con reglas. |
+| Estimación de costo | **Infracost** | Herramienta open-source dedicada a estimar costo de cambios de Terraform. No reinventes esto: intégralo. |
+| Integración con GitHub | **GitHub App** + webhooks | Una App da permisos granulares y firma los webhooks; mejor que un webhook personal. |
+| LLM | API de un proveedor (Anthropic / OpenAI) detrás de un adaptador | Salida estructurada vía JSON con esquema validado. |
+| Resiliencia | **tenacity** (reintentos/backoff) + timeouts | Aísla la lógica de fallo del LLM y la API. |
+| Observabilidad | Logging estructurado (**structlog**) + tabla de métricas | Registra costo y latencia por llamada al LLM; es un diferenciador en entrevistas. |
+| Contenedores | **Docker + docker-compose** | Levanta api, worker, postgres y redis en local con un comando. |
+| Tests | **pytest** + mocks de GitHub/LLM | La arquitectura hexagonal hace esto natural. |
+| CI/CD | **GitHub Actions** | Lint, tests y build en cada push; coherente con el dominio del proyecto. |
+
+---
+
+## 4. Paso a paso de desarrollo
+
+Cada paso es una entrega pequeña y verificable. Avanza en orden; cada uno se apoya en el anterior.
+
+1. **Esqueleto del proyecto.** Repo, estructura de carpetas por capas y `docker-compose` con api, worker, postgres y redis levantando juntos.
+2. **Recibir el webhook.** Crea la GitHub App, configura el evento de Pull Request y haz que la capa web reciba el POST y responda `2xx` de inmediato.
+3. **Verificar la firma.** Valida el HMAC del webhook con el secreto compartido; rechaza todo lo que no venga firmado correctamente.
+4. **Idempotencia.** Guarda el ID de entrega del webhook; si llega repetido, ignóralo. Si es nuevo, encola un job en Redis.
+5. **Worker básico.** Haz que el worker consuma el job de la cola y registre que lo recibió (sin lógica todavía).
+6. **Traer el diff.** Desde el worker, usa la API de GitHub para obtener los archivos cambiados del PR, respetando los rate limits.
+7. **Filtrar y parsear IaC.** Identifica los archivos de Terraform en el diff y conviértelos en estructuras inspeccionables con python-hcl2.
+8. **Reglas de seguridad deterministas.** Implementa un conjunto inicial de reglas de alto impacto (recurso público, puerto sensible abierto, secreto en texto plano).
+9. **Estimación de costo.** Integra Infracost sobre el diff y captura el impacto estimado del cambio.
+10. **Adaptador del LLM.** Detrás de un puerto, envía los hallazgos + el diff y pide una explicación en JSON con esquema fijo; valida estrictamente la respuesta.
+11. **Resiliencia del LLM.** Añade timeout, reintentos con backoff y un fallback (publicar los hallazgos deterministas) para cuando el modelo falle.
+12. **Publicar el comentario.** Construye un comentario estructurado y publícalo en el PR vía API de GitHub.
+13. **Persistir y medir.** Guarda el resultado del análisis y registra costo y latencia de cada llamada al LLM en PostgreSQL.
+14. **Observabilidad.** Logging estructurado correlacionado por PR y una vista simple de métricas de costo/latencia.
+15. **Tests.** Unitarios con GitHub y LLM mockeados; una prueba de integración del webhook firmado de extremo a extremo.
+16. **CI/CD y despliegue.** Pipeline en GitHub Actions (lint + tests + build) y despliegue del servicio.
+17. **Documentación de portafolio.** README claro, diagrama de arquitectura y una nota explicando las decisiones de diseño y sus trade-offs.
+
+---
+
+### Cómo presentarlo en una entrevista
+
+El gancho no es "usé un LLM". Es que trataste al modelo como una dependencia externa no confiable —con timeouts, reintentos, fallback y observabilidad de costo— y que separaste con criterio lo determinista (reglas, parseo) de lo que de verdad necesita IA (explicación). En un contexto fintech, el ángulo de **costo de infraestructura** te da una historia concreta que contar.
