@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 import hmac
 import hashlib
+import json
 
 load_dotenv()  # Carga las variables de entorno desde el archivo .env
 print("CWD:", os.getcwd())
@@ -37,7 +38,18 @@ async def github_webhook(request: Request):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     event_type = request.headers.get("X-GitHub-Event")
-    print(f"Webhook received: {event_type}, {len(raw_body)} bytes")
+    payload = json.loads(raw_body)
+
+    if event_type != "pull_request":
+        print(f"event ignored: {event_type}")
+        return {"status": "ignored"}
+    
+    #extraemos los datos que nos interesan del payload
+    action = payload.get("action")
+    repo = payload["repository"]["full_name"]
+    pr_number = payload["number"]
+
+    print(f"PR # {pr_number} in {repo} - action: {action}")
 
     return {"status:": "received"}
 
