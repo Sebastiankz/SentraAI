@@ -9,6 +9,8 @@ load_dotenv()  # Carga las variables de entorno desde el archivo .env
 print("CWD:", os.getcwd())
 
 GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
+RELEVANT_PR_ACTIONS = {"opened", "synchronize", "reopened"}
+
 
 app = FastAPI() #instancia de la app (no el server, el server es uvicorn)
 
@@ -46,6 +48,11 @@ async def github_webhook(request: Request):
     
     #extraemos los datos que nos interesan del payload
     action = payload.get("action")
+
+    if action not in RELEVANT_PR_ACTIONS:
+        print(f"PR action ignored: {action}")
+        return {"status": "ignored"}
+
     repo = payload["repository"]["full_name"]
     pr_number = payload["number"]
 
