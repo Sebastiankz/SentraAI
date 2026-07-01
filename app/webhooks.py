@@ -33,5 +33,9 @@ async def github_webhook(request: Request):
 
     repo = payload["repository"]["full_name"]
     pr_number = payload["number"]
-    print(f"PR a auditar: #{pr_number} en {repo} — acción: {action}")
-    return {"status": "received"}
+    
+    # Encolamos un job en Redis para auditar el PR (respondemos YA con 2xx). El worker lo procesará.
+    redis_pool = request.app.state.redis_pool
+    await redis_pool.enqueue_job("audit_pr", repo, pr_number)
+
+    return {"status": "queued"}
