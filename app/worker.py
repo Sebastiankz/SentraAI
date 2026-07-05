@@ -1,10 +1,10 @@
 from arq.connections import RedisSettings
 from app.config import REDIS_HOST, REDIS_PORT
-from app.github_client import get_pr_files, get_file_content, post_pr_comment
+from app.adapters.github import get_pr_files, get_file_content, post_pr_comment
 from app.audit import (
     filter_terraform_files, parse_hcl, extract_resources, run_rules, format_findings_comment, format_analysis_comment,
 )
-from app.llm_client import analyze_findings
+from app.adapters.llm import analyze_findings
 
 async def audit_pr(ctx, repo: str, pr_number: int):
     print(f"[worker] Auditando PR #{pr_number} de {repo}...")
