@@ -1,31 +1,28 @@
 from arq.connections import RedisSettings
 from app.config import REDIS_HOST, REDIS_PORT
-from app.github_client import get_pr_files, get_file_content
+from app.github_client import get_pr_files, get_file_content, post_pr_comment
 from app.audit import (
-    filter_terraform_files, parse_hcl, extract_resources, check_public_s3_acl, run_rules,
+    filter_terraform_files, parse_hcl, extract_resources, run_rules, format_findings_comment,
 )
 
 async def audit_pr(ctx, repo: str, pr_number: int):
     print(f"[worker] Auditando PR #{pr_number} de {repo}...")
 
     files = await get_pr_files(repo, pr_number)
-    tr_files = filter_terraform_files(files)
-
-    if not tr_files:
-        print("[worker] No hay archivos de Terraform modificados en este PR.")
+    tf_files = filter_terraform_files(files)
+    if not tf_files:
+        print("[worker] Sin Terraform; no comento.")
         return
 
-    for f in tr_files:
+    all_findings = []
+    for f in tf_files:
         content = await get_file_content(f["contents_url"])
         resources = extract_resources(parse_hcl(content))
+        all_findings.extend(run_rules(resources))
 
-        findings = run_rules(resources)
-        if findings:
-            print(f"[worker] {f['filename']} — {len(findings)} hallazgo(s):")
-            for finding in findings:
-                print(f"    ⚠️ [{finding.severity}] {finding.resource}: {finding.message}")
-        else:
-            print(f"[worker] ✅ {f['filename']}: sin hallazgos.")
+    comment = format_findings_comment(all_findings)
+    await post_pr_comment(repo, pr_number, comment)
+    print(f"[worker] ✅ Comenté en el PR #{pr_number} ({len(all_findings)} hallazgo(s)).")
 
         
 class WorkerSettings:

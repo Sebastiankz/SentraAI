@@ -106,3 +106,15 @@ def run_rules(resources: list[dict]) -> list[Finding]:
         findings.extend(rule(resources))
     return findings
 
+def format_findings_comment(findings: list[Finding]) -> str:
+    """Arma el texto (Markdown) del comentario a partir de los hallazgos."""
+    if not findings:
+        return "## 🛡️ SentraAI\n\n✅ Sin riesgos en los cambios de Terraform. ¡Todo limpio!"
+
+    lines = ["## 🛡️ SentraAI — hallazgos de seguridad\n"]
+    for f in findings:
+        lines.append(f"- **[{f.severity}]** `{f.resource}` — {f.message}")
+    return "\n".join(lines)
+
+
+

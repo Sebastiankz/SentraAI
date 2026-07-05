@@ -67,3 +67,14 @@ async def get_file_content(content_url: str) -> str:
 
     return base64.b64decode(data["content"]).decode("utf-8")
     
+async def post_pr_comment(repo: str, pr_number: int, body: str) -> None:
+    """Publica un comentario en el PR (usa el endpoint de issues)."""
+    token = await get_installation_token()
+    url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json={"body": body})
+        response.raise_for_status()
