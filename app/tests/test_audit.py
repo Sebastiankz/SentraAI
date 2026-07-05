@@ -3,6 +3,9 @@ from app.audit import (
     check_public_s3_acl,
 )
 
+from app.audit import build_comment, Finding, LLMAnalysis, AnalyzedFinding
+
+
 def test_filter_terraform_files_solo_deja_tf():
     files = [
         {"filename": "main.tf", "status": "added"},
@@ -34,3 +37,32 @@ def test_regla_ignora_bucket_privado():
     resources = extract_resources(parse_hcl(hcl))
     findings = check_public_s3_acl(resources)
     assert findings == []
+
+async def test_no_llama_al_llm_cuando_no_hay_hallazgos():
+    llamado = False
+
+    async def fake_analyze(findings):          # cumple el puerto (misma firma)
+        nonlocal llamado
+        llamado = True
+        return LLMAnalysis(summary="", findings=[])
+
+    comment = await build_comment([], fake_analyze)
+
+    assert "Sin hallazgos" in comment
+    assert llamado is False
+
+async def test_usa_el_llm_cuando_hay_hallazgos():
+    async def fake_analyze(findings):
+        return LLMAnalysis(
+            summary="Resumen falso",
+            findings=[AnalyzedFinding(
+                resource="aws_s3_bucket.data", priority="high",
+                explanation="exp falsa", recommendation="fix falso",
+            )],
+        )
+
+    findings = [Finding(severity="HIGH", resource="aws_s3_bucket.data", message="ACL pública")]
+    comment = await build_comment(findings, fake_analyze)
+
+    assert "Resumen falso" in comment
+    assert "aws_s3_bucket.data" in comment

@@ -2,6 +2,7 @@ import hcl2
 from dataclasses import dataclass
 from typing import Literal
 from pydantic import BaseModel
+from typing import Protocol
 
 
 class AnalyzedFinding(BaseModel):
@@ -13,6 +14,11 @@ class AnalyzedFinding(BaseModel):
 class LLMAnalysis(BaseModel):
     summary: str          
     findings: list[AnalyzedFinding] #analisis por cada hallazgo
+
+class FindingAnalyzer(Protocol):
+    """Puerto:  cualquier cosa capaz de analizar hallazgos y devolver un LLMAnalysis."""
+    async def __call__(self, findings: list["Finding"]) -> LLMAnalysis:
+        ...
 
 @dataclass
 class Finding:
@@ -136,7 +142,15 @@ def format_analysis_comment(analysis: LLMAnalysis) -> str:
         lines.append(f"### [{f.priority.upper()}] `{f.resource}`")
         lines.append(f.explanation)
         lines.append(f"**Recomendación:** {f.recommendation}\n")
-    return "\n".join(lines)  
+    return "\n".join(lines) 
+
+async def build_comment(findings: list[Finding], analyze: FindingAnalyzer) -> str:
+    """Construye el comentario final a partir de los hallazgos y el analizador LLM."""
+    if not findings:
+        return "## 🛡️ SentraAI\n\n✅ Sin hallazgos de seguridad."
+    
+    analysis = await analyze(findings)
+    return format_analysis_comment(analysis)
 
 
 
