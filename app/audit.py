@@ -1,5 +1,18 @@
 import hcl2
 from dataclasses import dataclass
+from typing import Literal
+from pydantic import BaseModel
+
+
+class AnalyzedFinding(BaseModel):
+    resource: str
+    priority: Literal["critical", "high", "medium", "low"]  # solo estos valores
+    explanation: str      # el riesgo, en lenguaje claro
+    recommendation: str   # cómo arreglarlo
+
+class LLMAnalysis(BaseModel):
+    summary: str          
+    findings: list[AnalyzedFinding] #analisis por cada hallazgo
 
 @dataclass
 class Finding:
@@ -115,6 +128,15 @@ def format_findings_comment(findings: list[Finding]) -> str:
     for f in findings:
         lines.append(f"- **[{f.severity}]** `{f.resource}` — {f.message}")
     return "\n".join(lines)
+
+def format_analysis_comment(analysis: LLMAnalysis) -> str:
+    """Arma el texto (Markdown) del comentario a partir del análisis del LLM."""
+    lines = ["## 🛡️ SentraAI — análisis de seguridad\n", analysis.summary, ""]
+    for f in analysis.findings:
+        lines.append(f"### [{f.priority.upper()}] `{f.resource}`")
+        lines.append(f.explanation)
+        lines.append(f"**Recomendación:** {f.recommendation}\n")
+    return "\n".join(lines)  
 
 
 

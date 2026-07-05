@@ -17,3 +17,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 GITHUB_APP_ID = os.environ["GITHUB_APP_ID"]
 GITHUB_APP_PRIVATE_KEY_PATH = os.environ["GITHUB_APP_PRIVATE_KEY_PATH"]
 GITHUB_APP_INSTALLATION_ID = os.environ["GITHUB_APP_INSTALLATION_ID"]
+
+#LLM
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+
