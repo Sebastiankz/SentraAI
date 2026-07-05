@@ -1,5 +1,5 @@
 import time
-
+import base64
 import jwt
 import httpx
 
@@ -37,7 +37,7 @@ async def get_installation_token() -> str:
     
 async def get_pr_files(repo: str, pr_number: int) -> list[dict]:
     # Trae los archivos modificados en un PR usando la API de GitHub.
-    token = await get_installation_token()
+    token = await get_installation_token() # Pide un token de instalación para poder llamar a la API de GitHub.
 
     url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
     headers = {
@@ -50,4 +50,20 @@ async def get_pr_files(repo: str, pr_number: int) -> list[dict]:
         response = await client.get(url, headers=headers, params=params)
         response.raise_for_status()
         return response.json()
+    
+async def get_file_content(content_url: str) -> str:
+    # Trae el contenido de un archivo desde la API de GitHub (la contents_url ya apunta al commit del PR).
+    token = await get_installation_token() # Pide un token de instalación para poder llamar a la API de GitHub.
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(content_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+    return base64.b64decode(data["content"]).decode("utf-8")
     
