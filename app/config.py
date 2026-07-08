@@ -22,3 +22,9 @@ GITHUB_APP_INSTALLATION_ID = os.environ["GITHUB_APP_INSTALLATION_ID"]
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
+#postgresql
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://sentra:sentra@localhost:5432/sentra"
+)
+
+

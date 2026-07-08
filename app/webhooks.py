@@ -3,6 +3,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from app.config import GITHUB_WEBHOOK_SECRET
 from app.security import verify_signature
+from app.db import record_delivery
 
 # Un router agrupa rutas. El 'prefix' se antepone a todas sus rutas,
 # y 'tags' las agrupa bonito en /docs.
@@ -29,6 +30,14 @@ async def github_webhook(request: Request):
     action = payload.get("action")
     if action not in RELEVANT_PR_ACTIONS:
         return {"status": "ignored"}
+    
+    # Idempotencia: ¿ya procesamos este delivery?
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    is_new = await record_delivery(request.app.state.db_pool, delivery_id)
+    if not is_new:
+        print(f"[idempotencia] Delivery {delivery_id} repetido; lo ignoro.")
+        return {"status": "duplicate"}
+    
 
     repo = payload["repository"]["full_name"]
     pr_number = payload["number"]
