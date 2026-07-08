@@ -66,3 +66,13 @@ async def test_usa_el_llm_cuando_hay_hallazgos():
 
     assert "Resumen falso" in comment
     assert "aws_s3_bucket.data" in comment
+
+async def test_build_comment_hace_fallback_si_el_llm_falla():
+    async def llm_caido(findings):
+        raise RuntimeError("Ollama no responde")
+
+    findings = [Finding(severity="HIGH", resource="aws_s3_bucket.data", message="ACL pública")]
+    comment = await build_comment(findings, llm_caido)
+
+    assert "aws_s3_bucket.data" in comment   # el hallazgo determinista SÍ sale
+    assert "ACL pública" in comment

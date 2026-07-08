@@ -1,7 +1,13 @@
 import httpx
-
+from pydantic import ValidationError
 from app.config import OLLAMA_HOST, OLLAMA_MODEL
 from app.audit import Finding, LLMAnalysis
+
+from tenacity import (
+    retry, stop_after_attempt, wait_exponential, retry_if_exception_type,
+)
+
+
 
 SYSTEM_PROMPT = (
     "Eres un experto en seguridad de infraestructura como código. "
@@ -9,6 +15,13 @@ SYSTEM_PROMPT = (
     "Tu tarea es EXPLICAR cada hallazgo en lenguaje claro y accionable y PRIORIZARLO. "
     "No inventes hallazgos nuevos ni cuestiones los existentes. "
     "Responde ÚNICAMENTE con el JSON del esquema indicado."
+)
+
+@retry(
+    stop=stop_after_attempt(3),                              # hasta 3 intentos
+    wait=wait_exponential(multiplier=1, min=2, max=10),      # espera 2s, 4s, ... (máx 10s)
+    retry=retry_if_exception_type((httpx.HTTPError, ValidationError)),
+    reraise=True,                                            # si todos fallan, relanza el error
 )
 
 async def analyze_findings(findings: list[Finding]) -> LLMAnalysis:

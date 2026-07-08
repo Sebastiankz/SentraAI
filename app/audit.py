@@ -149,8 +149,15 @@ async def build_comment(findings: list[Finding], analyze: FindingAnalyzer) -> st
     if not findings:
         return "## 🛡️ SentraAI\n\n✅ Sin hallazgos de seguridad."
     
-    analysis = await analyze(findings)
-    return format_analysis_comment(analysis)
+    try:
+        analysis = await analyze(findings)
+        return format_analysis_comment(analysis)
+    
+    except Exception as e:
+        print(f"[fallback] El LLM no está disponible ({e}); publico hallazgos básicos.")
+        return format_findings_comment(findings)
+    
+
 
 
 
